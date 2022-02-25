@@ -71,6 +71,7 @@ func (h *WebhookHandler) HandleEvent(payload interface{}) {
 	gitGenInfo := getGitGeneratorInfo(payload)
 	prGenInfo := getPRGeneratorInfo(payload)
 	if gitGenInfo == nil && prGenInfo == nil {
+		log.Infof("Did not receive git generator info")
 		return
 	}
 
@@ -86,6 +87,7 @@ func (h *WebhookHandler) HandleEvent(payload interface{}) {
 		for _, gen := range appSet.Spec.Generators {
 			// check if the ApplicationSet uses the git generator that is relevant to the payload
 			shouldRefresh = shouldRefreshGitGenerator(gen.Git, gitGenInfo) || shouldRefreshPRGenerator(gen.PullRequest, prGenInfo)
+			log.Infof("should refresh %s: %v", appSet.Name, shouldRefresh)
 			if shouldRefresh {
 				break
 			}
@@ -97,6 +99,9 @@ func (h *WebhookHandler) HandleEvent(payload interface{}) {
 				continue
 			}
 			log.Infof("refresh ApplicationSet %v/%v from webhook", appSet.Namespace, appSet.Name)
+		} else {
+			log.Infof("We think we should not refresh %v/%v", appSet.Namespace, appSet.Name)
+
 		}
 	}
 }
@@ -107,6 +112,7 @@ func (h *WebhookHandler) Handler(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Header.Get("X-GitHub-Event") != "":
+		log.Infof("Parsing GITHUB payload")
 		payload, err = h.github.Parse(r, github.PushEvent, github.PullRequestEvent)
 	case r.Header.Get("X-Gitlab-Event") != "":
 		payload, err = h.gitlab.Parse(r, gitlab.PushEvents, gitlab.TagEvents)
@@ -140,6 +146,7 @@ func getGitGeneratorInfo(payload interface{}) *gitGeneratorInfo {
 		revision    string
 		touchedHead bool
 	)
+
 	switch payload := payload.(type) {
 	case github.PushPayload:
 		webURL = payload.Repository.HTMLURL
@@ -150,6 +157,7 @@ func getGitGeneratorInfo(payload interface{}) *gitGeneratorInfo {
 		revision = parseRevision(payload.Ref)
 		touchedHead = payload.Project.DefaultBranch == revision
 	default:
+		log.Infof("Failed to get git generator info, type %s", payload)
 		return nil
 	}
 
@@ -224,26 +232,35 @@ func isAllowedPullRequestAction(action string) bool {
 }
 
 func shouldRefreshGitGenerator(gen *v1alpha1.GitGenerator, info *gitGeneratorInfo) bool {
+	log.Infof("shouldRefreshGitGenerator")
+
 	if gen == nil || info == nil {
+		log.Infof("shouldRefreshGitGenerator breaking out early")
 		return false
 	}
 
 	if !gitGeneratorUsesURL(gen, info.Revision, info.RepoRegexp) {
+		log.Infof("Git generator does not use same URL")
 		return false
 	}
 	if !genRevisionHasChanged(gen, info.Revision, info.TouchedHead) {
+		log.Infof("Revision wasn't changed")
 		return false
 	}
+	log.Infof("shouldRefreshGitGenerator success!!")
 	return true
 }
 
 func genRevisionHasChanged(gen *v1alpha1.GitGenerator, revision string, touchedHead bool) bool {
 	targetRev := parseRevision(gen.Revision)
+	log.Infof("genRevisionHasChanged targetRev %s revision %s", targetRev, revision)
 	if targetRev == "HEAD" || targetRev == "" { // revision is head
 		return touchedHead
 	}
 
-	return targetRev == revision
+	result := targetRev == revision
+	log.Infof("genRevisionHasChanged targetRev %s revision %s result %v", targetRev, revision, result)
+	return result
 }
 
 func gitGeneratorUsesURL(gen *v1alpha1.GitGenerator, webURL string, repoRegexp *regexp.Regexp) bool {
